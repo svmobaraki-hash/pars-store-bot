@@ -1,6 +1,7 @@
 import asyncio
 import os
 import pandas as pd
+from aiohttp import web
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
@@ -11,7 +12,6 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 TOKEN = "8531045283:AAEXf-LTfkux_HdFa5UhTPohAbK4l48nS2I"
 ADMIN_ID = 5635839198  # آیدی عددی تلگرام شما برای دریافت فایل اکسل
 
-# چون ربات روی سرور ابری خارج از ایران اجرا می‌شود، نیازی به پروکسی نیست
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
@@ -147,7 +147,6 @@ async def finalize_and_send(bot_instance, chat_id, user_id, state: FSMContext, m
         worksheet.column_dimensions['A'].width = 22
         worksheet.column_dimensions['B'].width = 35
 
-    # 1. ارسال فایل اکسل به آیدی ادمین
     try:
         document = types.FSInputFile(file_name)
         await bot_instance.send_document(
@@ -158,7 +157,6 @@ async def finalize_and_send(bot_instance, chat_id, user_id, state: FSMContext, m
     except Exception as e:
         print(f"Error sending document to admin: {e}")
     
-    # 2. ارسال پیام موفقیت و کد تخفیف به مشتری
     name = data.get('name', 'کاربر')
     summary = (
         f"✅ {name} عزیز، ثبت‌نام و اطلاعات شما با موفقیت در سیستم فروشگاه پارس ثبت شد!\n\n"
@@ -278,7 +276,6 @@ async def finish_products(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     await route_to_next_step(state, callback)
 
-# ملامین
 @dp.callback_query(SurveyStates.waiting_for_melamine_brands, F.data.startswith("brand_"))
 async def toggle_melamine(callback: types.CallbackQuery, state: FSMContext):
     brand = callback.data.split("_", 1)[1]
@@ -324,7 +321,6 @@ async def finish_melamine(callback: types.CallbackQuery, state: FSMContext):
     else:
         await ask_satisfaction(callback, state)
 
-# MDF
 @dp.callback_query(SurveyStates.waiting_for_mdf_brands, F.data.startswith("brand_"))
 async def toggle_mdf(callback: types.CallbackQuery, state: FSMContext):
     brand = callback.data.split("_", 1)[1]
@@ -362,7 +358,6 @@ async def finish_mdf(callback: types.CallbackQuery, state: FSMContext):
     else:
         await ask_satisfaction(callback, state)
 
-# هایگلاس
 @dp.callback_query(SurveyStates.waiting_for_highgloss_brands, F.data.startswith("brand_"))
 async def toggle_highgloss(callback: types.CallbackQuery, state: FSMContext):
     brand = callback.data.split("_", 1)[1]
@@ -389,7 +384,6 @@ async def finish_highgloss(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     await ask_satisfaction(callback, state)
 
-# سنجش میزان رضایت (ستاره‌ها)
 @dp.callback_query(SurveyStates.waiting_for_satisfaction, F.data.startswith("sat_"))
 async def process_satisfaction(callback: types.CallbackQuery, state: FSMContext):
     sat_map = {"sat_4": "عالی ⭐⭐⭐⭐", "sat_3": "خوب ⭐⭐⭐", "sat_2": "متوسط ⭐⭐", "sat_1": "بد ⭐"}
@@ -404,20 +398,17 @@ async def process_satisfaction(callback: types.CallbackQuery, state: FSMContext)
     await callback.answer()
     await state.set_state(SurveyStates.waiting_for_feedback_choice)
 
-# انتخاب کاربر: ندارم
 @dp.callback_query(SurveyStates.waiting_for_feedback_choice, F.data == "no_feedback")
 async def process_no_feedback(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(feedback="ندارد")
     await finalize_and_send(bot, callback.message.chat.id, callback.from_user.id, state, callback)
 
-# انتخاب کاربر: دارم
 @dp.callback_query(SurveyStates.waiting_for_feedback_choice, F.data == "has_feedback")
 async def process_has_feedback(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text("لطفاً پیشنهاد، انتقاد یا نظر خود را بنویسید:")
     await callback.answer()
     await state.set_state(SurveyStates.waiting_for_feedback_text)
 
-# دریافت متن پیام کاربر
 @dp.message(SurveyStates.waiting_for_feedback_text)
 async def process_feedback_text_input(message: types.Message, state: FSMContext):
     await state.update_data(feedback=message.text)
@@ -427,13 +418,27 @@ async def process_feedback_text_input(message: types.Message, state: FSMContext)
     
     await message.answer("متن شما دریافت شد. برای اتمام کار روی دکمه زیر بزنید:", reply_markup=builder.as_markup())
 
-# دکمه ارسال نهایی پیشنهاد/انتقاد
 @dp.callback_query(SurveyStates.waiting_for_feedback_text, F.data == "submit_final_feedback")
 async def submit_final_feedback(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     await finalize_and_send(bot, callback.message.chat.id, callback.from_user.id, state, callback)
 
+# --- وب‌سرور برای رایگان ماندن در رندر ---
+async def handle(request):
+    return web.Response(text="Bot is running!")
+
+async def web_server():
+    app = web.Application()
+    app.router.add_get("/", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
 async def main():
+    # اجرای همزمان وب‌سرور و ربات تلگرام
+    asyncio.create_task(web_server())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
